@@ -23,7 +23,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 """
 
-
+import ssl
 import sys
 import argparse
 from argparse import ArgumentTypeError
@@ -87,6 +87,9 @@ class PodcastArchiver:
 
         for feed in (args.feed or []):
             self.addFeed(feed)
+            if args.unverified:
+                ssl._create_default_https_context = ssl._create_unverified_context
+
 
         for opml in (args.opml or []):
             self.parseOpmlFile(opml)
@@ -151,11 +154,15 @@ class PodcastArchiver:
 
         return filename
 
-    def linkToTargetFilename(self, link):
+    def linkToTargetFilename(self, link, title):
 
         # Remove HTTP GET parameters from filename by parsing URL properly
         linkpath = urlparse(link).path
         basename = path.basename(linkpath)
+        basename = title + '_' + basename
+        basename = basename.replace(":", "_").replace("|", "_").replace("：", "_")
+        basename = basename.replace('"', "_").replace('*', "")
+        basename = basename.replace('?', "_").replace('？', "_").replace('/', "_")
 
         # If requested, slugify the filename
         if self.slugify:
@@ -209,11 +216,29 @@ class PodcastArchiver:
     def parseEpisode(self, episode):
         url = None
         episode_info = {}
+        summary_detail = episode.get('summary_detail', None)
+        if summary_detail:
+            if 'type' in summary_detail:
+                if summary_detail['type'].endswith('html'):
+                    if 'value' in summary_detail and summary_detail['value']:
+                        episode_info['html'] = summary_detail['value']
+        
+        content = episode.get('content', None) 
+        if content:
+            for link in content:
+                if 'type' in link:
+                    if link['type'].endswith('html'):
+                        if 'value' in link and link['value']:
+                            episode_info['html'] = link['value']
+
         for link in episode['links']:
             if 'type' in link.keys():
                 if link['type'].startswith('audio'):
                     url = link['href']
                 elif link['type'].startswith('video'):
+                    url = link['href']
+
+                if not url and 'length' in link and int(link['length']) > 8192:
                     url = link['href']
 
                 if url is not None:
@@ -267,7 +292,8 @@ class PodcastArchiver:
             if self.update:
                 for index, episode_dict in enumerate(linklist):
                     link = episode_dict['url']
-                    filename = self.linkToTargetFilename(link)
+                    title = episode_dict['title']
+                    filename = self.linkToTargetFilename(link, title)
 
                     if path.isfile(filename):
                         del(linklist[index:])
@@ -307,6 +333,7 @@ class PodcastArchiver:
 
         for cnt, episode_dict in enumerate(linklist):
             link = episode_dict['url']
+            title = episode_dict['title']
             if self.verbose == 1:
                 print("\r2. Downloading content ... {0}/{1}"
                       .format(cnt + 1, nlinks), end="", flush=True)
@@ -321,7 +348,13 @@ class PodcastArchiver:
                         print("\t * %10s: %s" % (key, episode_dict[key]))
 
             # Check existence once ...
-            filename = self.linkToTargetFilename(link)
+            filename = self.linkToTargetFilename(link, title)
+            fbase, fext = path.splitext(filename)
+            htmlname = fbase + ".html"
+            if not path.isfile(htmlname) and 'html' in episode_dict:
+                makedirs(path.dirname(htmlname), exist_ok=True)
+                with open(htmlname, 'wb') as htmlfile:
+                    htmlfile.write(episode_dict['html'].encode())
 
             if self.verbose > 1:
                 print("\tLocal filename:", filename)
@@ -340,7 +373,7 @@ class PodcastArchiver:
                     link = response.geturl()
                     total_size = int(response.getheader('content-length', '0'))
                     old_filename = filename
-                    filename = self.linkToTargetFilename(link)
+                    filename = self.linkToTargetFilename(link, title)
 
                     if old_filename != filename:
                         if self.verbose > 1:
@@ -399,6 +432,8 @@ if __name__ == "__main__":
         parser.add_argument('-f', '--feed', action='append',
                             help='''Add a feed URl to the archiver. The parameter can be used
                                  multiple times, once for every feed.''')
+        parser.add_argument('-U', '--unverified', action='store_true',
+                            help='''create_unverified_context''')
         parser.add_argument('-d', '--dir', action=writeable_dir,
                             help='''Set the output directory of the podcast archive.''')
         parser.add_argument('-s', '--subdirs', action='store_true',
