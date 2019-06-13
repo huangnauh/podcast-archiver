@@ -28,7 +28,7 @@ import sys
 import argparse
 from argparse import ArgumentTypeError
 import feedparser
-from feedparser import CharacterEncodingOverride
+from feedparser import CharacterEncodingOverride, NonXMLContentType
 from urllib.request import urlopen, Request
 import urllib.error
 from shutil import copyfileobj
@@ -162,6 +162,7 @@ class PodcastArchiver:
         basename = title + '_' + basename
         basename = basename.replace(":", "_").replace("|", "_").replace("：", "_")
         basename = basename.replace('"', "_").replace('*', "")
+        basename = basename.replace('>', "_").replace('<', "_")
         basename = basename.replace('?', "_").replace('？', "_").replace('/', "_")
 
         # If requested, slugify the filename
@@ -180,6 +181,9 @@ class PodcastArchiver:
         else:
             filename = path.join(self.savedir, basename)
 
+        if len(filename) > 100:
+            fbase, fext = path.splitext(filename)
+            filename = fbase[0:100] + fext
         return filename
 
     def parseFeedToNextPage(self, feedobj=None):
@@ -218,18 +222,14 @@ class PodcastArchiver:
         episode_info = {}
         summary_detail = episode.get('summary_detail', None)
         if summary_detail:
-            if 'type' in summary_detail:
-                if summary_detail['type'].endswith('html'):
-                    if 'value' in summary_detail and summary_detail['value']:
-                        episode_info['html'] = summary_detail['value']
+            if 'value' in summary_detail and summary_detail['value']:
+                episode_info['html'] = summary_detail['value']
         
         content = episode.get('content', None) 
         if content:
             for link in content:
-                if 'type' in link:
-                    if link['type'].endswith('html'):
-                        if 'value' in link and link['value']:
-                            episode_info['html'] = link['value']
+                if 'value' in link and link['value']:
+                    episode_info['html'] = link['value']
 
         for link in episode['links']:
             if 'type' in link.keys():
@@ -271,7 +271,7 @@ class PodcastArchiver:
             if self._feedobj['bozo'] == 1:
 
                 # If the character encoding is wrong, we continue as long as the reparsing succeeded
-                if type(self._feedobj['bozo_exception']) is not CharacterEncodingOverride:
+                if type(self._feedobj['bozo_exception']) not in [CharacterEncodingOverride, NonXMLContentType]:
                     print('\nDownloaded feed is malformatted on', self._feed_next_page)
                     return None
 
